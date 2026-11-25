@@ -90,7 +90,7 @@ sudo systemctl status wolrelay --no-pager
 
 ```sh
 journalctl -u wolrelay -f
-# 期望：ready: 192.168.192.10:9 (ztxxxx) -> 192.168.10.255:9
+# 期望：ready: 10.147.20.5:9 (ztab1234cd) -> 192.168.1.255:9
 ```
 
 ## 5. 验证

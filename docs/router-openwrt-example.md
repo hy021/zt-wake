@@ -78,27 +78,29 @@ socat -V | head -3               # 应显示 WITH_UDP 1 / WITH_IP4 1
 
 ## 3. 找到隧道的接口名和地址
 
+> 本章所有地址都是**示例值**：隧道地址 `10.147.20.5`、局域网广播 `192.168.1.255`、接口名 `ztab1234cd`。照做时替换成你自己的，别直接抄。
+
 ```sh
-zerotier-cli listnetworks        # 最后一列是接口名，例如 zteb4hqmon
+zerotier-cli listnetworks        # 最后一列是接口名，例如 ztab1234cd
 ip -4 addr show | grep -E 'inet |zt'
 ```
 
 两个关键事实（很多人在这里翻车）：
 
-- ZeroTier 的接口**不一定叫 `zt*`**，可能叫 `zteb4hqmon` 这种；按 `zt` 前缀过滤会漏掉它；
-- 取到的那个 IP（如 `192.168.192.10`）才是 **bind 地址**，不是 LAN 网关。
+- ZeroTier 的接口**不一定叫 `zt*`**，可能叫 `ztab1234cd` 这种；按 `zt` 前缀过滤会漏掉它；
+- 取到的那个 IP（示例 `10.147.20.5`）才是 **bind 地址**，不是 LAN 网关。下面所有示例地址统一用 `10.147.20.5` / `192.168.1.255`，实际请换成自己的。
 
 ## 4. 前台验证（先跑通再做成服务）
 
 ```sh
-socat -d -d UDP4-RECVFROM:9,bind=192.168.192.10,reuseaddr,fork \
-      UDP4-DATAGRAM:192.168.10.255:9,broadcast
+socat -d -d UDP4-RECVFROM:9,bind=10.147.20.5,reuseaddr,fork \
+      UDP4-DATAGRAM:192.168.1.255:9,broadcast
 ```
 
 手机发一次唤醒包，日志应出现一次：
 
 ```
-received packet with 102 bytes from AF=2 192.168.192.x
+received packet with 102 bytes from AF=2 10.147.20.x
 ```
 
 ### **最大的坑：bind 不能写 `0.0.0.0`**
@@ -107,7 +109,7 @@ received packet with 102 bytes from AF=2 192.168.192.x
 
 判断特征：日志里源地址是本机 IP、子进程不断出现、`forked off` 无限增长。见到就立刻 `Ctrl+C`，把 `bind` 改成隧道 IP。
 
-另一个相关的坑：`192.168.10.255` 这种广播地址要按**实际掩码**算，不是所有网段都是 /24。用 `ip -4 addr show br-lan` 看 `brd` 后面的值。
+另一个相关的坑：`192.168.1.255` 这种广播地址要按**实际掩码**算，不是所有网段都是 /24。用 `ip -4 addr show br-lan` 看 `brd` 后面的值。
 
 ## 5. 做成开机自启（关键是等隧道拿到 IP）
 
