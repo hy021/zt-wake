@@ -309,7 +309,7 @@ public class MainActivity extends Activity {
         parent.addView(ztPanel);
 
         ztBtn = new TextView(this);
-        ztBtn.setText("打开 Zerotier Fix");
+        ztBtn.setText("打开隧道");
         ztBtn.setTextSize(12.5f);
         ztBtn.setTypeface(Typeface.DEFAULT_BOLD);
         ztBtn.setTextColor(0xFF7FF3FF);
@@ -323,7 +323,7 @@ public class MainActivity extends Activity {
         bb.setStroke(dp(1), 0xFF2FA6BF);
         ztBtn.setBackground(new RippleDrawable(ColorStateList.valueOf(0x66FFFFFF), bb, bb));
         ztBtn.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) { openZerotierFix(); }
+            @Override public void onClick(View v) { chooseTunnelApp(); }
         });
         ztPanel.addView(ztBtn, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -344,22 +344,76 @@ public class MainActivity extends Activity {
         });
     }
 
-    private void openZerotierFix() {
+    /* 常见隧道客户端：包名 -> 兜底名称（装了就优先用系统里的应用名） */
+    private static final String[][] TUNNELS = {
+            {"net.kaaass.zerotierfix", "ZerotierFix"},
+            {"com.zerotier.one", "ZeroTier One"},
+            {"com.tailscale.ipn", "Tailscale"},
+            {"com.wireguard.android", "WireGuard"},
+            {"net.openvpn.openvpn", "OpenVPN Connect"},
+            {"de.blinkt.openvpn", "OpenVPN for Android"},
+            {"org.strongswan.android", "strongSwan"},
+    };
+
+    /** 列出手机里已安装的隧道客户端，让用户自己选一个打开 */
+    private void chooseTunnelApp() {
+        final ArrayList<String> pkgs = new ArrayList<>();
+        final ArrayList<String> labels = new ArrayList<>();
+        android.content.pm.PackageManager pm = getPackageManager();
+        for (String[] t : TUNNELS) {
+            try {
+                android.content.pm.ApplicationInfo ai = pm.getApplicationInfo(t[0], 0);
+                if (ai == null) continue;
+                CharSequence lb = pm.getApplicationLabel(ai);
+                pkgs.add(t[0]);
+                labels.add(lb == null || lb.length() == 0 ? t[1] : lb.toString());
+            } catch (Throwable ignored) { }
+        }
+
+        if (pkgs.isEmpty()) {
+            AlertDialog.Builder nb = new AlertDialog.Builder(this,
+                    android.R.style.Theme_Material_Dialog_Alert)
+                    .setTitle("没有检测到隧道客户端")
+                    .setMessage("请先安装 ZeroTier / Tailscale / WireGuard 中的任意一个，连上隧道后回到本页。")
+                    .setPositiveButton("去应用商店", new DialogInterface.OnClickListener() {
+                        @Override public void onClick(DialogInterface d, int w) {
+                            try {
+                                Intent it = new Intent(Intent.ACTION_VIEW,
+                                        android.net.Uri.parse("market://search?q=zerotier"));
+                                it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                                startActivity(it);
+                            } catch (Throwable t) { toast("请手动在应用商店搜索 ZeroTier / Tailscale"); }
+                        }
+                    })
+                    .setNegativeButton("取消", null);
+            AlertDialog dlg0 = nb.create();
+            styleDialog(dlg0);
+            dlg0.show();
+            return;
+        }
+
+        AlertDialog.Builder b = new AlertDialog.Builder(this,
+                android.R.style.Theme_Material_Dialog_Alert)
+                .setTitle("选择隧道客户端")
+                .setItems(labels.toArray(new String[0]), new DialogInterface.OnClickListener() {
+                    @Override public void onClick(DialogInterface d, int which) {
+                        launchPkg(pkgs.get(which));
+                    }
+                })
+                .setNegativeButton("取消", null);
+        AlertDialog dlg = b.create();
+        styleDialog(dlg);
+        dlg.show();
+    }
+
+    private void launchPkg(String pkg) {
         try {
-            Intent it = getPackageManager().getLaunchIntentForPackage(ZT_PKG);
+            Intent it = getPackageManager().getLaunchIntentForPackage(pkg);
             if (it == null) throw new IllegalStateException("no launch intent");
             it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             startActivity(it);
         } catch (Throwable t) {
-            try {
-                Intent it = new Intent(Intent.ACTION_VIEW,
-                        android.net.Uri.parse("market://details?id=" + ZT_PKG));
-                it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                startActivity(it);
-                toast("未检测到 ZerotierFix，已跳转商店");
-            } catch (Throwable t2) {
-                toast("未检测到 ZerotierFix，请先安装");
-            }
+            toast("打不开该应用，请手动打开");
         }
     }
 
