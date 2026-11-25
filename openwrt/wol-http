@@ -1,0 +1,54 @@
+#!/bin/sh
+# /usr/local/bin/wol-http —— nginx 反代用的极简 HTTP 端点
+#
+# 由 socat 以 root 身份执行（etherwake 需要 raw socket 权限）
+# 由 nginx 通过 proxy_pass 转发：location = /cgi-bin/wol { proxy_pass http://127.0.0.1:9999/wol?$args; }
+# 协议：读一行请求行 + 丢弃头部，输出 HTTP/1.0 响应后退出。
+
+# ===== 改这里 =====
+TOKEN="CHANGE_ME_8f3a91"          # 必改，和手机 App 里的唤醒令牌一致
+MAC_DEFAULT="AA:BB:CC:DD:EE:FF"   # 不传 m 参数时用这个 MAC
+IFACE="br-lan"                    # 主网卡
+# ==================
+
+# 读请求行；紧接着把请求头读到空行为止
+read -r REQ || exit 0
+while read -r HDR; do
+	[ ${#HDR} -le 1 ] && break
+done
+
+# 从 "GET /wol?t=xx&m=yy HTTP/1.1" 里取出查询串
+QS=""
+case "$REQ" in
+	*\?*) QS="${REQ#*\?}"; QS="${QS%% *}" ;;
+esac
+
+get_param() {
+	printf '%s' "$QS" | tr '&' '\n' | sed -n "s/^$1=//p" | head -n 1
+}
+
+T=$(get_param t)
+M=$(get_param m)
+[ -z "$M" ] && M="$MAC_DEFAULT"
+
+if [ "$T" != "$TOKEN" ]; then
+	BODY="DENY: 令牌不对"
+elif ! printf '%s' "$M" | grep -Eq '^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'; then
+	BODY="DENY: MAC 格式不对：$M"
+else
+	logger -t wol "wake request: $M"
+	if etherwake -b -i "$IFACE" "$M" 2>/dev/null; then
+		BODY="OK: 已从 $IFACE 广播唤醒包 $M"
+	else
+		BODY="FAIL: etherwake 执行失败，检查 IFACE=$IFACE"
+	fi
+fi
+
+LEN=$(printf '%s' "$BODY" | wc -c)
+printf 'HTTP/1.0 200 OK\r\n'
+printf 'Content-Type: text/plain; charset=utf-8\r\n'
+printf 'Content-Length: %s\r\n' "$LEN"
+printf 'Cache-Control: no-store\r\n'
+printf 'Connection: close\r\n'
+printf '\r\n'
+printf '%s' "$BODY"

@@ -1,0 +1,43 @@
+#!/bin/sh
+# /www/cgi-bin/wol —— 路由器端唤醒 CGI
+# 访问：http://路由器地址/cgi-bin/wol?t=你的令牌&m=AA:BB:CC:DD:EE:FF
+#
+# 说明：由 uhttpd 执行，调 etherwake 从 br-lan 发局域网广播。
+# 依赖：opkg install etherwake  （luci-app-wol 已经带了它）
+
+# ===== 改这里 =====
+TOKEN="CHANGE_ME_8f3a91"          # 必改，随机串，别用弱口令
+MAC_DEFAULT="AA:BB:CC:DD:EE:FF"   # 不传 m 参数时用这个 MAC
+IFACE="br-lan"                    # 主网卡，一般不用改
+# ==================
+
+printf 'Content-Type: text/plain; charset=utf-8\r\n'
+printf 'Cache-Control: no-store\r\n'
+printf '\r\n'
+
+get_param() {
+	printf '%s' "$QUERY_STRING" | tr '&' '\n' | sed -n "s/^$1=//p" | head -n 1
+}
+
+T=$(get_param t)
+M=$(get_param m)
+
+if [ "$T" != "$TOKEN" ]; then
+	printf 'DENY: 令牌不对\n'
+	exit 0
+fi
+
+[ -z "$M" ] && M="$MAC_DEFAULT"
+
+if ! printf '%s' "$M" | grep -Eq '^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'; then
+	printf 'DENY: MAC 格式不对：%s\n' "$M"
+	exit 0
+fi
+
+logger -t wol "wake request: $M from ${REMOTE_ADDR:-?}"
+
+if etherwake -b -i "$IFACE" "$M" 2>/dev/null; then
+	printf 'OK: 已从 %s 广播唤醒包 %s\n' "$IFACE" "$M"
+else
+	printf 'FAIL: etherwake 执行失败，检查 IFACE=%s 是否存在\n' "$IFACE"
+fi

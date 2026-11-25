@@ -1,0 +1,11 @@
+#!/bin/sh /etc/rc.common
+# 只读的邻居表接口，监听 9999，仅 LAN / ZeroTier 可达（WAN 默认被防火墙挡住）
+START=99
+USE_PROCD=1
+
+start_service() {
+	procd_open_instance
+	procd_set_param command /usr/bin/socat TCP-LISTEN:9999,fork,reuseaddr EXEC:/usr/bin/wol-arp.sh
+	procd_set_param respawn 3600 5 5
+	procd_close_instance
+}
