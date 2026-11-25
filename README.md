@@ -58,8 +58,11 @@ docs/                              隧道、中继设备、排错、限制
 
 ## 文档
 
+- [OpenWrt 实战配置（含踩坑）](docs/router-openwrt-example.md)：换源、socat、自回环、开机时序、端口占用
+- [飞牛 NAS（fnOS）做中继](docs/nas-fnos.md)：Debian 12、SSH、systemd、Docker 两种方式
 - [任意三层隧道](docs/tunnel.md)：Tailscale / WireGuard / frp / 公网映射怎么接
 - [中继设备与路由器配置](docs/router.md)：要求、固件支持矩阵、各平台命令
+- [排错](docs/troubleshooting.md)
 - [排错](docs/troubleshooting.md)
 - [已知限制](docs/limitations.md)
 
