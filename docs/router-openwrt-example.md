@@ -1,9 +1,11 @@
-# OpenWrt 实战配置（含踩过的坑）
+English | [简体中文](router-openwrt-example.zh-CN.md)
 
-> 这份不是"理想步骤"，而是**实际跑通一遍后回头整理的过程**：换源、装 socat、绑错地址导致自回环、开机时序、端口被占、防火墙误判……按顺序照做可以少走很多弯路。
-> 适用于 OpenWrt / LEDE / ImmortalWrt / iStoreOS；老固件的"换源"部分尤其重要。
+# OpenWrt walkthrough (including the pitfalls we actually hit)
 
-## 0. 先确认底座，别急着装
+> This is not an "ideal steps" page: it is **a walkthrough written after getting it running for real** — replacing feeds, installing socat, binding the wrong address and self-looping, boot ordering, port conflicts, false firewall scares. Following it in order saves a lot of detours.
+> Applies to OpenWrt / LEDE / ImmortalWrt / iStoreOS; the "replace feeds" part matters most on older third-party builds.
+
+## 0. Identify the base first, do not install anything yet
 
 ```sh
 ubus call system board
@@ -12,17 +14,17 @@ opkg print-architecture
 cat /etc/opkg/distfeeds.conf
 ```
 
-重点看三样：**发行版与编译版本**（如 `SNAPSHOT` / `R21.6.1`）、**内核版本**（如 `5.4.122`）、**musl/libc 版本**。
+Three things matter: **distro and build** (e.g. `SNAPSHOT` / `R21.6.1`), **kernel version** (e.g. `5.4.122`), and **musl/libc version**.
 
-判断原则：
+Rules of thumb:
 
-- 官方 23.05 / 24.10：`opkg install socat` 一般直接可用，跳到第 3 步；
-- 第三方编译（Lean LEDE、iStoreOS 老版本）：官方源通常**对不上代际**，需要换源；
-- 源地址里如果出现 `lede/snapshots`，**基本已经失效**（镜像站早清空了），必须换。
+- Official 23.05 / 24.10: `opkg install socat` usually just works — skip to step 3;
+- Third-party builds (Lean LEDE, older iStoreOS): the official feeds are usually **the wrong generation** and must be replaced;
+- If any feed URL contains `lede/snapshots`, it is **almost certainly dead** (mirrors purged those years ago) and must be replaced.
 
-## 1. 换源（老固件必做）
+## 1. Replace the feeds (mandatory on older builds)
 
-以 Lean LEDE R21.6.1（musl 1.1.24、lua 版 LuCI）为例，同代可用的是 **OpenWrt 19.07.10**：
+Taking Lean LEDE R21.6.1 (musl 1.1.24, lua-based LuCI) as the example, the matching generation is **OpenWrt 19.07.10**:
 
 ```sh
 cp /etc/opkg/distfeeds.conf /etc/opkg/distfeeds.conf.bak
@@ -39,88 +41,88 @@ EOF
 opkg update
 ```
 
-`x86/64` 与 `x86_64` 按自己架构替换（ARM 路由是 `arm_cortex-a7` 之类）。
+Replace `x86/64` and `x86_64` with your own architecture (ARM routers use something like `arm_cortex-a7`).
 
-**六个 feed 都打印 `Updated list ...` 才算成功**，用条数复核：
+**All six feeds must print `Updated list ...`** — verify by count:
 
 ```sh
-opkg list | wc -l        # 19.07.10 的 x86_64 全量约 7900 条
+opkg list | wc -l        # a full 19.07.10 x86_64 tree is roughly 7900 packages
 ```
 
-### 换源的三个坑
+### Three traps when replacing feeds
 
-1. `Signature check failed` → `sed -i 's/# option check_signature.*/option check_signature 0/' /etc/opkg.conf` 后重试；
-2. `wget returned 5` / https 握手失败 → 把地址里的 `https://` 换成 `http://`（镜像会 301，opkg 会跟随）；
-3. 腾讯抽风 → 整套换阿里云：`https://mirrors.aliyun.com/openwrt/releases/19.07.10/...`，路径结构完全一样。
+1. `Signature check failed` → run `sed -i 's/# option check_signature.*/option check_signature 0/' /etc/opkg.conf` and retry;
+2. `wget returned 5` / TLS handshake failure → change `https://` to `http://` in the URLs (mirrors answer 301 and opkg follows it);
+3. A mirror having a bad day → switch the whole set to another mirror: `https://mirrors.aliyun.com/openwrt/releases/19.07.10/...` — identical path structure.
 
-### 换源后的三条禁令
+### Three prohibitions after replacing feeds
 
-| 禁止 | 原因 |
+| Don't | Why |
 |---|---|
-| 装任何 `kmod-*` | 源里的 kmod 是针对旧内核编译的，与当前内核版本不符，依赖校验直接失败；`--force-depends` 强装会导致模块加载失败甚至起不来 |
-| `opkg upgrade` | 会批量顶掉 libc / libjson-c / luci-base，覆盖第三方固件的补丁，常见后果是 LuCI 打不开 |
-| 无预检直接装 | 装前先 `opkg install --noaction <包名>` 看依赖是否会把系统带坏 |
+| Install any `kmod-*` | The kmods in the feed were built for a different kernel than yours, so dependency checks fail outright; forcing with `--force-depends` leads to modules that won't load and possibly a router that won't boot |
+| Run `opkg upgrade` | It replaces libc / libjson-c / luci-base wholesale, overwriting vendor patches; a very common outcome is a dead LuCI |
+| Install without a dry run | Always `opkg install --noaction <pkg>` first to see whether dependencies would wreck the system |
 
-退回旧源：`cp /etc/opkg/distfeeds.conf.bak /etc/opkg/distfeeds.conf`
+Roll back: `cp /etc/opkg/distfeeds.conf.bak /etc/opkg/distfeeds.conf`
 
-## 2. 装 socat
+## 2. Install socat
 
 ```sh
-opkg install --noaction socat    # 先预检
+opkg install --noaction socat    # dry run first
 opkg install socat
-socat -V | head -3               # 应显示 WITH_UDP 1 / WITH_IP4 1
+socat -V | head -3               # should show WITH_UDP 1 / WITH_IP4 1
 ```
 
-> **坑**：`socat` 包会自带一个 UCI 服务（`/etc/init.d/socat` + `/etc/config/socat`，默认 `enable '0'`）。它虽然默认不启动，但会和你的中继抢同一个 9 端口，排查时极容易被误判成"服务自己起来了又自己死了"。建议直接停用：
+> **Trap**: the `socat` package ships its own UCI service (`/etc/init.d/socat` + `/etc/config/socat`, `enable '0'` by default). It does not start by default, but it competes for the same port 9 as your relay, which makes debugging maddening — it looks like "the service starts and dies by itself". Disable it outright:
 > ```sh
 > /etc/init.d/socat disable
 > ```
 
-## 3. 找到隧道的接口名和地址
+## 3. Find the tunnel interface name and address
 
-> 本章所有地址都是**示例值**：隧道地址 `10.147.20.5`、局域网广播 `192.168.1.255`、接口名 `ztab1234cd`。照做时替换成你自己的，别直接抄。
+> Every address in this chapter is an **example**: tunnel address `10.147.20.5`, LAN broadcast `192.168.1.255`, interface name `ztab1234cd`. Replace them with your own — do not copy them verbatim.
 
 ```sh
-zerotier-cli listnetworks        # 最后一列是接口名，例如 ztab1234cd
+zerotier-cli listnetworks        # the last column is the interface name, e.g. ztab1234cd
 ip -4 addr show | grep -E 'inet |zt'
 ```
 
-两个关键事实（很多人在这里翻车）：
+Two key facts where many people trip:
 
-- ZeroTier 的接口**不一定叫 `zt*`**，可能叫 `ztab1234cd` 这种；按 `zt` 前缀过滤会漏掉它；
-- 取到的那个 IP（示例 `10.147.20.5`）才是 **bind 地址**，不是 LAN 网关。下面所有示例地址统一用 `10.147.20.5` / `192.168.1.255`，实际请换成自己的。
+- A ZeroTier interface is **not necessarily named `zt*`** — it may look like `ztab1234cd`; filtering on the `zt` prefix can miss it entirely;
+- The address you find (example `10.147.20.5`) is the **bind address**, not the LAN gateway. All examples below use `10.147.20.5` / `192.168.1.255`; substitute your own.
 
-## 4. 前台验证（先跑通再做成服务）
+## 4. Validate in the foreground (before making it a service)
 
 ```sh
 socat -d -d UDP4-RECVFROM:9,bind=10.147.20.5,reuseaddr,fork \
       UDP4-DATAGRAM:192.168.1.255:9,broadcast
 ```
 
-手机发一次唤醒包，日志应出现一次：
+Send one wake packet from the phone; the log should show one line:
 
 ```
 received packet with 102 bytes from AF=2 10.147.20.x
 ```
 
-### **最大的坑：bind 不能写 `0.0.0.0`**
+### **The biggest trap: never bind `0.0.0.0`**
 
-监听所有接口再转发到 LAN 广播，广播包会被同一个 socket 收回来，形成**自回环**：每处理一个包就 fork 一个子进程，源地址一直是本机，端口一路变（58238 → 40218 → 33143 …），CPU 很快打满、日志刷屏。
+Listening on all interfaces and forwarding to the LAN broadcast makes the broadcast come back into the same socket — a **self-loop**: every packet forks a child, the source address is always the local machine, the source port keeps changing (58238 → 40218 → 33143 …), CPU pegs and logs flood.
 
-判断特征：日志里源地址是本机 IP、子进程不断出现、`forked off` 无限增长。见到就立刻 `Ctrl+C`，把 `bind` 改成隧道 IP。
+Signs: source address equals the local IP, children keep appearing, `forked off` grows without bound. When you see it, `Ctrl+C` immediately and change `bind` to the tunnel IP.
 
-另一个相关的坑：`192.168.1.255` 这种广播地址要按**实际掩码**算，不是所有网段都是 /24。用 `ip -4 addr show br-lan` 看 `brd` 后面的值。
+A related trap: a broadcast address like `192.168.1.255` must be computed from the **actual netmask**; not every network is /24. Check the value after `brd` with `ip -4 addr show br-lan`.
 
-## 5. 做成开机自启（关键是等隧道拿到 IP）
+## 5. Make it start at boot (the key is waiting for the tunnel IP)
 
-**坑**：路由器重启后 ZeroTier 往往要十几秒才拿到 IP。如果服务在启动瞬间就去 `bind` 一个还不存在的地址，会绑定失败；再配合 `respawn 3600 5 5`（3600 秒内失败 5 次就永久放弃），服务就彻底死了，表现为"手动跑能通、开机就是不行"。
+**Trap**: after a reboot ZeroTier often needs ten-odd seconds to obtain an address. If the service tries to `bind` an address that does not exist yet, binding fails; combined with `respawn 3600 5 5` (give up permanently after 5 failures within 3600 s) the service dies for good — "works when run by hand, never works after boot".
 
-正确做法：**等待逻辑放在进程内部**，进程一直活着，procd 就不会触发放弃。
+Correct approach: **put the waiting inside the process**, so the process stays alive and procd never gives up.
 
 ```sh
 cat > /usr/bin/wolrelay.sh <<'EOF'
 #!/bin/sh
-# 自动找隧道网卡（zt* / tailscale* / wg*），等到拿到 IPv4 再 exec socat
+# find the tunnel interface (zt* / tailscale* / wg*), wait for an IPv4, then exec socat
 LAN_BCAST=$(ip -4 addr show br-lan 2>/dev/null | awk '/brd /{for(i=1;i<=NF;i++) if($i=="brd"){print $(i+1); exit}}')
 [ -z "$LAN_BCAST" ] && LAN_BCAST=255.255.255.255
 
@@ -151,7 +153,7 @@ USE_PROCD=1
 start_service() {
     procd_open_instance
     procd_set_param command /usr/bin/wolrelay.sh
-    procd_set_param respawn 0 1 5      # 0 = 永不放弃重试
+    procd_set_param respawn 0 1 5      # 0 = never stop retrying
     procd_set_param stdout 1
     procd_set_param stderr 1
     procd_close_instance
@@ -162,28 +164,28 @@ chmod +x /etc/init.d/wolrelay
 /etc/init.d/wolrelay restart
 ```
 
-## 6. 清残留进程（"端口被占"的元凶）
+## 6. Clear stale processes (the real cause of "port already in use")
 
-反复手动跑 socat、或旧服务没停干净时，会有多个进程抢 9 端口，包落到谁手里不确定：
+After repeated manual socat runs, or a previous service not fully stopped, several processes fight over port 9 and it is anyone's guess which one gets the packet:
 
 ```sh
 /etc/init.d/wolrelay stop 2>/dev/null
 killall socat 2>/dev/null
-netstat -lnup | grep ':9 '     # 应该没有任何输出
+netstat -lnup | grep ':9 '     # should print nothing
 ```
 
-## 7. 验证服务真的接管了
+## 7. Verify the service really took over
 
 ```sh
 logread -e wolrelay | tail -3
 ubus call service list '{"name":"wolrelay"}'
 ```
 
-后者出现 `"instance1": { "running": true, "pid": ... , "command": ["/usr/bin/wolrelay.sh"] }` 才算 procd 真的在管；只靠 `ps` 看 `PPid: 1` 分辨不出来（procd 和孤儿进程的父进程都是 1）。
+Only when the latter shows `"instance1": { "running": true, "pid": ... , "command": ["/usr/bin/wolrelay.sh"] }` is procd really managing it. `ps` alone cannot tell — procd and orphans both show `PPid: 1`.
 
-## 8. 防火墙：多数情况不需要，别被误导
+## 8. Firewall: usually unnecessary, do not be misled
 
-实测中，**不加任何规则也能收到 102 字节**，说明隧道接口入站本来就是通的。只有在你把 INPUT 默认策略改成拒绝、或自定义了防火墙规则时，才需要：
+In our measurements, the 102 bytes arrived **with no firewall rule at all**, which means inbound traffic on the tunnel interface already passes. You only need a rule if you set the INPUT policy to deny or wrote your own firewall rules:
 
 ```sh
 uci add firewall rule
@@ -195,30 +197,30 @@ uci set firewall.@rule[-1].target='ACCEPT'
 uci commit firewall && /etc/init.d/firewall reload
 ```
 
-如果之前加过临时规则、现在想删：
+To remove a temporary rule you added earlier:
 
 ```sh
 iptables -S INPUT | grep 'dport 9'
-iptables -D INPUT -i <隧道接口> -p udp --dport 9 -j ACCEPT
+iptables -D INPUT -i <tunnel interface> -p udp --dport 9 -j ACCEPT
 /etc/init.d/firewall reload
 ```
 
-## 9. 如果广播出不去（少数内核限制）
+## 9. If the broadcast cannot get out (some kernels)
 
-部分 LEDE 内核会丢弃"从非 LAN 接口收到、再转发成 LAN 广播"的包。替代方案是不发广播，直接**二层单播魔术包**：
+Some LEDE kernels drop packets that arrive on a non-LAN interface and are re-sent as a LAN broadcast. The alternative is to skip broadcast and send a **layer-2 unicast magic packet**:
 
 ```sh
 opkg install ether-wake
-socat UDP4-RECVFROM:9,bind=<隧道IP>,reuseaddr,fork \
-      EXEC:"/usr/bin/ether-wake <目标MAC>",nofork
+socat UDP4-RECVFROM:9,bind=<tunnel ip>,reuseaddr,fork \
+      EXEC:"/usr/bin/ether-wake <target MAC>",nofork
 ```
 
-原理：`ether-wake` 在 br-lan 上直接发二层帧，不走 IP 广播，绕过内核限制。缺点是每台主机要单独配一个中继。
+Rationale: `ether-wake` writes a layer-2 frame directly on br-lan, bypassing IP broadcast and the kernel restriction. The downside is one relay per host.
 
-## 10. 最终验收
+## 10. Final acceptance
 
-1. 手机关 Wi-Fi、走流量，隧道连上，发一次包 → 电脑应被唤醒；
-2. `logread -e wolrelay` 有 `ready: ...`、`receiving on ...`；
-3. **重启路由器**，等隧道 `ONLINE` 后再发一次 → 仍能唤醒，才算真正自动化。
+1. Turn Wi-Fi off on the phone, use mobile data, connect the tunnel, send one packet → the machine should wake;
+2. `logread -e wolrelay` shows `ready: ...` and `receiving on ...`;
+3. **Reboot the router**, wait for the tunnel to come back `ONLINE`, send again → it must still wake. Only then is it truly automatic.
 
-排错顺序永远是：**日志有没有收到 102 字节** → 抓包看 br-lan 有没有广播 → 主机侧 WOL 设置。
+The debugging order is always: **did the log show 102 bytes** → tcpdump for a broadcast on br-lan → the host's own WOL settings.

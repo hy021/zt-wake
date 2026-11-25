@@ -1,27 +1,29 @@
-# 已知限制
+English | [简体中文](limitations.zh-CN.md)
 
-## MAC 地址在部分 ROM 上读不到
+# Known limitations
 
-- Android 10 起，`targetSdk 29+` 无法读 `/proc/net/arp`；
-- 本机 netlink（`RTM_GETNEIGH`）在部分 ROM 的 SELinux 策略下被直接拒绝（`errno=13`、`pkts=0`）；
-- 属于系统限制，不是实现问题——同类开源 App 在同一台机器上同样显示 `MAC address not found`。
+## MAC addresses are unreadable on some ROMs
 
-现状：MAC 需手填；`targetSdk` 保持 28 以尽量保留 `/proc/net/arp` 可用性。
+- Since Android 10, `targetSdk 29+` cannot read `/proc/net/arp`;
+- Local netlink (`RTM_GETNEIGH`) is refused outright by the SELinux policy of some ROMs (`errno=13`, `pkts=0`);
+- This is a platform restriction, not an implementation flaw — comparable open-source apps show `MAC address not found` on the same device.
 
-## 隧道面板不能控制 VPN
+Current state: the MAC must be entered manually; `targetSdk` stays at 28 to keep `/proc/net/arp` usable where possible.
 
-Android 客户端的 ZeroTier 不对外开放控制接口，VPN 授权弹窗本身也是系统行为。
-App 只显示网关可达性，连接动作需在对应客户端里完成。
+## The tunnel panel cannot control the VPN
 
-## 扫描只列"确认在线"设备
+Android ZeroTier clients expose no control interface, and the VPN consent dialog is system behavior anyway.
+The app only reports gateway reachability; connecting happens in the client itself.
 
-某些路由器会对不存在的地址统一回 RST（典型耗时 280~300ms 且高度一致）。
-这类假阳性一律过滤，不统计、不显示。
+## The scan only lists confirmed-online devices
 
-## 广播不跨三层
+Some routers answer RST uniformly for addresses that do not exist (typically 280–300 ms and suspiciously consistent).
+Such false positives are filtered out entirely — not counted, not shown.
 
-这是设计前提，不是 bug。见 [tunnel.md](tunnel.md)。
+## Broadcast does not cross layer 3
 
-## 中继必须常在线
+That is the design premise, not a bug. See [tunnel.md](tunnel.md).
 
-断网 / 断电 / 重启期间无法唤醒任何主机；中继需配置开机自启。
+## The relay must stay online
+
+While it is offline, power-cycled or rebooting, no host can be woken; configure autostart on the relay.

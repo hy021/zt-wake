@@ -1,57 +1,59 @@
-# 中继设备与路由器配置
+English | [简体中文](router.zh-CN.md)
 
-**不限 OpenWrt。** 前提只有一条：有一台**常在线**、**接在目标局域网**、**能跑 `socat`** 的 Linux。
-OpenWrt 只是最省事的形态（有 procd、有 opkg、脚本零配置）。
+# Relay devices and router configuration
 
-## 硬性要求
+**OpenWrt is not required.** There is exactly one prerequisite: a Linux box that is **always on**, **attached to the target LAN**, and **can run `socat`**.
+OpenWrt is simply the most convenient shape (procd, opkg, zero-config script).
 
-1. 始终在线（休眠/断电期间无法唤醒任何主机）
-2. 与目标主机同一广播域（跨 VLAN 需把广播地址写死）
-3. 能跑 UDP 监听 + 广播转发
-4. 能被手机透过隧道打到
-5. 开机自启（断电恢复后能自动拉起）
+## Hard requirements
 
-反例：光猫、纯 web 管理的原厂路由、锁了 SSH 的运营商网关。
+1. Always powered on (nothing can be woken while it sleeps or is off)
+2. In the same broadcast domain as the target host (across VLANs you must hard-code the broadcast address)
+3. Able to listen on UDP and forward a broadcast
+4. Reachable from the phone through the tunnel
+5. Auto-start on boot (so it comes back after a power cut)
 
-## 固件支持矩阵
+Counter-examples: ISP gateways, stock routers with web UI only, carrier gateways with SSH locked down.
 
-| 平台 | 支持度 | 落地方式 |
+## Firmware support matrix
+
+| Platform | Support | How |
 |---|---|---|
-| OpenWrt / LEDE / ImmortalWrt / iStoreOS | 完整 | `opkg install socat` + `wolrelay` |
-| Asuswrt-Merlin | 可用 | 开 JFFS + Entware，`/jffs/scripts/services-start` 拉起 |
-| Padavan | 可用 | Entware 装 socat，启动脚本拉起 |
-| DD-WRT | 可用 | 启动命令 + 外部存储 |
-| pfSense / OPNsense | 可用 | shell 装 socat 或写 rc 脚本 |
-| MikroTik RouterOS | 部分 | 内置 `/tool wol` 能发唤醒包，但没有 UDP 中继，需 SSH/API 触发；**本 App 不支持这种触发** |
-| Synology / QNAP | 可用 | 任务计划跑 socat 脚本 |
-| 树莓派 / 软路由 / 常在线小主机 | 可用 | systemd / rc.local |
-| 常在线 Windows 小主机 | 可用 | `wol_relay.py`，见下 |
-| 原厂家用路由（无 shell） | 不可用 | 改用局域网内任一常在线设备当中继 |
+| OpenWrt / LEDE / ImmortalWrt / iStoreOS | Full | `opkg install socat` + `wolrelay` |
+| Asuswrt-Merlin | Works | Enable JFFS + Entware, start from `/jffs/scripts/services-start` |
+| Padavan | Works | socat from Entware, start from a boot script |
+| DD-WRT | Works | Boot command + external storage |
+| pfSense / OPNsense | Works | Install socat via shell or write an rc script |
+| MikroTik RouterOS | Partial | Built-in `/tool wol` can send a magic packet, but there is no UDP relay; needs SSH/API triggering, **which this app does not do** |
+| Synology / QNAP | Works | Task scheduler running a socat script |
+| Raspberry Pi / x86 soft router / small always-on host | Works | systemd / rc.local |
+| Always-on Windows mini PC | Works | `wol_relay.py`, see below |
+| Stock consumer router (no shell) | No | Use any always-on device on the LAN as the relay instead |
 
-## OpenWrt 步骤
+## OpenWrt steps
 
 ```sh
 opkg update && opkg install socat
 
-scp wolrelay root@<路由器>:/etc/init.d/wolrelay
-ssh root@<路由器> 'chmod +x /etc/init.d/wolrelay'
+scp wolrelay root@<router>:/etc/init.d/wolrelay
+ssh root@<router> 'chmod +x /etc/init.d/wolrelay'
 
 /etc/init.d/wolrelay enable
 /etc/init.d/wolrelay start
-logread -t wolrelay    # listen <隧道地址>:9 -> <局域网广播>:9
+logread -t wolrelay    # listen <tunnel addr>:9 -> <LAN broadcast>:9
 ```
 
-三个变量：
+Three variables:
 
 ```sh
-ZT_IP=auto          # 自动找 zt* 网卡；Tailscale 写 tailscale0 的 IP；也可写死
+ZT_IP=auto          # auto-detect a tunnel interface; for Tailscale use the tailscale0 IP; can also be hard-coded
 LAN_IFACE=br-lan
-LAN_BCAST=auto      # 自动按掩码算广播（已验证 /20、/26）
+LAN_BCAST=auto      # derive the broadcast from the netmask (verified on /20 and /26)
 ```
 
-### 防火墙
+### Firewall
 
-中继是"本地监听 + 出站广播"，默认策略下无需额外放行。若自定义了 INPUT 拒绝策略：
+The relay only listens locally and sends outbound broadcasts, so the default policy needs no extra rule. If you changed INPUT to deny:
 
 ```sh
 uci add firewall rule
@@ -63,29 +65,29 @@ uci set firewall.@rule[-1].target='ACCEPT'
 uci commit firewall && /etc/init.d/firewall reload
 ```
 
-## 任何 Linux 的通用写法
+## Generic Linux form
 
 ```sh
-socat UDP4-RECV:9,bind=<隧道地址>,fork UDP4-DATAGRAM:<局域网广播>:9,broadcast
+socat UDP4-RECV:9,bind=<tunnel address>,fork UDP4-DATAGRAM:<LAN broadcast>:9,broadcast
 ```
 
-配开机自启即可：
+Then just make it start at boot:
 
-- Merlin：`/jffs/scripts/services-start`
-- Padavan / DD-WRT：启动脚本
-- 群晖：控制面板 → 任务计划 → 开机触发
-- 树莓派：systemd unit 或 `/etc/rc.local`
-- 普通 Linux：systemd（`Restart=always`）
+- Merlin: `/jffs/scripts/services-start`
+- Padavan / DD-WRT: boot script
+- Synology: Control Panel → Task Scheduler → triggered at boot
+- Raspberry Pi: a systemd unit or `/etc/rc.local`
+- Plain Linux: systemd (`Restart=always`)
 
-## 没有路由器权限：用局域网内任一常在线设备
+## No router access: use any always-on device on the LAN
 
-Linux 用上面的 socat 命令。常在线 Windows 小主机用这个脚本（Python 3，无依赖）：
+Linux uses the socat command above. An always-on Windows mini PC can use this script (Python 3, no dependencies):
 
 ```python
-# wol_relay.py —— 监听 UDP 9，收到即转发到局域网广播
+# wol_relay.py -- listen on UDP 9, re-broadcast every packet to the LAN
 import socket
 LISTEN_PORT = 9
-BROADCAST = "192.168.1.255"      # 改成自己的广播地址
+BROADCAST = "192.168.1.255"      # replace with your own broadcast address
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
@@ -96,22 +98,22 @@ while True:
     s.sendto(data, (BROADCAST, LISTEN_PORT))
 ```
 
-配合任务计划程序开机启动。注意：这台 Windows 自己不能被唤醒，它只当中继。
+Start it from Task Scheduler. Note: this Windows box cannot be woken by itself — it is only a relay.
 
-## 网络侧注意事项
+## Network-side notes
 
-- 关闭 AP 隔离 / 客户端隔离（隔离会拦广播）
-- 与目标主机同一广播域；跨 VLAN 时把 `LAN_BCAST` 写死为目标网段的广播地址
-- UDP 9 未被占用；占用时改端口，App 里同步改
-- 交换机的广播抑制 / 风暴控制不要过严
-- 主机 BIOS 开启 WOL、关闭 ErP/EuP、Windows 关闭快速启动
+- Disable AP isolation / client isolation (isolation blocks broadcasts)
+- Keep the relay in the same broadcast domain as the target; across VLANs hard-code `LAN_BCAST` to the target subnet's broadcast address
+- UDP 9 must be free; if taken, change the port in the relay and in the app together
+- Do not set switch broadcast suppression / storm control too aggressively
+- On the target host: enable WOL in BIOS, disable ErP/EuP, disable Windows Fast Startup
 
-## 安全取舍
+## Security trade-offs
 
-| 方案 | 暴露面 | 建议 |
+| Approach | Exposure | Recommendation |
 |---|---|---|
-| ZeroTier / Tailscale / WireGuard | 无公网端口 | 推荐 |
-| frp / nps | 仅 frps 端口 | 中 |
-| 公网 IP + UDP 映射 | UDP 9 对公网 | 限制来源或换端口 |
+| ZeroTier / Tailscale / WireGuard | No public port | Recommended |
+| frp / nps | Only the frps port | Medium |
+| Public IP + UDP mapping | UDP 9 open to the internet | Restrict the source or change the port |
 
-中继本身不做认证（UDP 无握手），"谁能进你的隧道"就是安全边界。
+The relay itself performs no authentication (UDP has no handshake). **"Who can get into your tunnel" is the security boundary.**

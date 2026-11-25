@@ -1,73 +1,94 @@
-# 网络唤醒 · 远程隧道唤醒（ZT Wake）
+English | [简体中文](README.zh-CN.md)
 
-安卓端 **网络唤醒（Wake-on-LAN）** 客户端，支持**局域网唤醒**与**远程隧道唤醒**。适合没有公网 IP、也不想开端口映射的场景：手机在外面，通过一条三层隧道叫醒家里的电脑。
+# ZT Wake — Wake-on-LAN over any remote tunnel
 
-> **不限于 ZeroTier，也不限于 OpenWrt。**
-> 唤醒包永远那 102 字节，任何三层隧道（ZeroTier / Tailscale / WireGuard / frp / 公网映射）+ 一台常在线设备都能用。
+An Android **Wake-on-LAN** client with both **LAN wake** and **remote wake over a tunnel**. Built for the case where you have no public IP and no desire to open port forwards: your phone is outside, and a single layer-3 tunnel wakes the machine at home.
 
-界面为原生 View 手写，无第三方依赖，APK 约 200 KB。
+> **Not tied to ZeroTier, and not tied to OpenWrt.**
+> A magic packet is always the same 102 bytes. Any layer-3 tunnel (ZeroTier / Tailscale / WireGuard / frp / public-IP mapping) plus one always-on box will do.
 
-## 它解决什么问题
+The UI is hand-written with native Views, zero third-party dependencies, APK about 200 KB.
 
-唤醒包（Magic Packet）是**二层广播帧**：6 字节 `FF` + 目标 MAC 重复 16 次，共 102 字节，UDP 9 端口。
+## The problem it solves
 
-- 同网段广播 → 正常唤醒；
-- 走 ZeroTier / 任何三层隧道 → **广播不过去**，主机收不到。
+A magic packet is a **layer-2 broadcast frame**: 6 bytes of `FF` followed by the target MAC repeated 16 times, 102 bytes total, sent to UDP port 9.
 
-于是让一台**始终在线、又接在目标局域网**的设备（路由器 / NAS / 树莓派）收下单播包，再在局域网里广播出去：
+- Broadcast inside the same subnet → works.
+- Over ZeroTier or any layer-3 tunnel → **broadcast does not traverse it**, the host never sees the packet.
+
+So let a device that is **always on and attached to the target LAN** (router / NAS / Raspberry Pi) take the unicast packet and re-broadcast it locally:
 
 ```
-手机 App  →  隧道  →  常在线中继  →  局域网广播  →  主机网卡  →  开机
+Phone app  →  tunnel  →  always-on relay  →  LAN broadcast  →  target NIC  →  power on
 ```
 
-不暴露公网端口，不需要特殊固件。
+No public port exposed, no special firmware required.
 
-## 三步跑起来
+## Up and running in three steps
 
-1. **中继侧**（OpenWrt 或任何有 socat 的 Linux）：
+1. **Relay side** (OpenWrt, or any Linux with socat):
    ```sh
-   opkg install socat          # 非 OpenWrt 用各自包管理器
+   opkg install socat          # use your distro's package manager otherwise
    cp openwrt/wolrelay /etc/init.d/wolrelay && chmod +x /etc/init.d/wolrelay
    /etc/init.d/wolrelay enable && /etc/init.d/wolrelay start
-   logread -t wolrelay         # 看到 listen <隧道地址>:9 -> <局域网广播>:9
+   logread -t wolrelay         # expect: listen <tunnel addr>:9 -> <LAN broadcast>:9
    ```
-2. **手机**：装 APK，切到「ZT 远程」，点「打开隧道」——App 会列出手机里已安装的隧道客户端（ZeroTier / ZerotierFix / Tailscale / WireGuard / OpenVPN）供你选择，连上隧道后确认顶部 `ZT 网关 x / y 可达` 变成绿色。
-3. **加主机**：填名称、MAC、局域网 IP、中继的隧道地址（端口默认 9），点卡片即唤醒。
+2. **Phone**: install the APK, switch to "ZT Remote", tap **"Open tunnel"** — the app lists the tunnel clients installed on the phone (ZeroTier / ZerotierFix / Tailscale / WireGuard / OpenVPN) and lets you pick one. Once connected, the header `ZT gateways x / y reachable` turns green.
+3. **Add a host**: name, MAC, LAN IP, and the relay's tunnel address (port 9 by default). Tap the card to wake.
 
-## 主要功能
+## Features
 
-- **双模式**：局域网唤醒（直接广播）/ **远程隧道唤醒**（发给中继，由中继广播）
-- **任意隧道**：不绑定 ZeroTier，点「打开隧道」自动列出已安装的隧道客户端供选择
-- **主机卡片**：自定义名称、MAC、局域网 IP、独立网关地址与端口，点卡片直接唤醒
-- **在线状态**：ICMP → 端口握手 → 快速 RST → NetBIOS 多级判定，并发探测约 1 秒出结果；下拉刷新带 `检测中 … n / m` 进度
-- **局域网扫描**：按真实掩码计算范围、边扫边出现、过滤路由器代答的假阳性
-- **主机名解析**：系统 PTR → mDNS → HTTP `<title>` 三级兜底
-- **网关状态**：卡片里的网关地址自动去重，顶部显示 `x / y 可达`，卡片显示 `通 / 通·拒 / 不通`
-- **原生 ICMP**：`native/nbl.c` 自写 ICMP echo（普通 App 权限可用），多线程不串包
+- **Two modes**: LAN wake (direct broadcast) / **remote wake over a tunnel** (send to the relay, the relay broadcasts)
+- **Any tunnel**: not bound to ZeroTier; "Open tunnel" enumerates installed tunnel clients for you to choose
+- **Host cards**: custom name, MAC, LAN IP, per-host gateway address and port; tap the card to wake
+- **Online status**: ICMP → port handshake → fast RST → NetBIOS, multi-stage detection, parallel probing, results in about 1 second; pull-to-refresh shows `probing … n / m`
+- **LAN scan**: range computed from the real netmask, rows appear as they are found, router-generated false positives filtered out
+- **Hostname resolution**: system PTR → mDNS → HTTP `<title>`, three-level fallback
+- **Gateway status**: gateway addresses on the cards are de-duplicated, header shows `x / y reachable`, each card shows `up / up·refused / down`
+- **Native ICMP**: `native/nbl.c` implements ICMP echo (works with normal app permissions), multi-threaded without cross-talk
 
-## 目录
+## Screens
+
+<table>
+<tr>
+<td><img src="docs/images/ui-main-lan.png" width="220"/><br/><b>LAN mode</b><br/>main list, tap a card to wake</td>
+<td><img src="docs/images/ui-zt-mode.png" width="220"/><br/><b>ZT Remote</b><br/>"Open tunnel" + gateway reachability</td>
+<td><img src="docs/images/ui-scan.png" width="220"/><br/><b>LAN scan</b><br/>rows appear while scanning</td>
+</tr>
+<tr>
+<td><img src="docs/images/ui-add-host.png" width="220"/><br/><b>Add host</b><br/>name · MAC · IP · gateway · port</td>
+<td></td><td></td>
+</tr>
+</table>
+
+*Rendered from the app's real layout and colors; host names, MACs and IPs are placeholder data.*
+
+## Layout
 
 ```
-src/com/zt/wol/MainActivity.java   主界面：列表、扫描、探测、唤醒
-src/com/zt/wol/NetHelper.java      JNI 入口
-native/nbl.c                       netlink 邻居表 + ICMP echo
-libs/                              预编译 libnbl.so（arm64-v8a / armeabi-v7a）
-openwrt/wolrelay                   中继：socat UDP 转发（procd 服务，自动识别 zt*、自动算广播）
-docs/                              隧道、中继设备、排错、限制
+src/com/zt/wol/MainActivity.java   UI: list, scan, probe, wake
+src/com/zt/wol/NetHelper.java      JNI entry points
+native/nbl.c                       netlink neighbour table + ICMP echo
+libs/                              prebuilt libnbl.so (arm64-v8a / armeabi-v7a)
+openwrt/wolrelay                   relay: socat UDP forwarder (procd service, auto-detects zt*/tailscale*/wg*, auto-computes broadcast)
+docs/                              tunnels, relay devices, troubleshooting, limits
 ```
 
-## 文档
+## Documentation
 
-- [OpenWrt 实战配置（含踩坑）](docs/router-openwrt-example.md)：换源、socat、自回环、开机时序、端口占用
-- [飞牛 NAS（fnOS）做中继](docs/nas-fnos.md)：Debian 12、SSH、systemd、Docker 两种方式
-- [任意三层隧道](docs/tunnel.md)：Tailscale / WireGuard / frp / 公网映射怎么接
-- [中继设备与路由器配置](docs/router.md)：要求、固件支持矩阵、各平台命令
-- [排错](docs/troubleshooting.md)
-- [已知限制](docs/limitations.md)
+Every document is available in English (default) and Simplified Chinese.
 
-## 编译
+- [OpenWrt walkthrough (with the pitfalls hit for real)](docs/router-openwrt-example.md) — feed replacement, socat, self-looping, boot ordering, port conflicts
+- [Feiniu NAS (fnOS) as a relay](docs/nas-fnos.md) — Debian 12, SSH, systemd, Docker
+- [Any layer-3 tunnel](docs/tunnel.md) — how to wire Tailscale / WireGuard / frp / public-IP mapping
+- [Relay devices and router configuration](docs/router.md) — requirements, firmware support matrix, per-platform commands
+- [Troubleshooting](docs/troubleshooting.md)
+- [Known limitations](docs/limitations.md)
+- [Tech notes (pitfall log)](docs/tech-notes.md)
 
-需要 JDK 17、Android SDK Platform 33、Build-Tools 33.0.2；改 `native/nbl.c` 还需 NDK r26+。
+## Building
+
+Needs JDK 17, Android SDK Platform 33, Build-Tools 33.0.2; editing `native/nbl.c` additionally needs NDK r26+.
 
 ```sh
 aapt2 compile --dir res -o build/res.zip
@@ -76,15 +97,17 @@ aapt2 link -I $ANDROID_JAR --manifest AndroidManifest.xml --auto-add-overlay \
 javac -source 8 -target 8 -encoding UTF-8 -cp $ANDROID_JAR -d build/classes \
     build/gen/com/zt/wol/R.java src/com/zt/wol/MainActivity.java src/com/zt/wol/NetHelper.java
 d8 --lib $ANDROID_JAR --min-api 21 --output build/ build/classes/com/zt/wol/*.class
-# 把 classes.dex 与 lib/<abi>/libnbl.so 打进 base.apk，zipalign 后用自有 keystore 签名
+# add classes.dex and lib/<abi>/libnbl.so into base.apk, zipalign, then sign with your own keystore
 ```
 
-## 安全
+`build.sh` wraps the same pipeline end to end.
 
-- 隧道方案不暴露任何端口到公网；
-- 公网 IP + UDP 映射等于把 9 端口开到公网，建议限制来源或换端口；
-- 中继无认证（UDP 没有握手），**"谁能进你的隧道"就是安全边界**。
+## Security
 
-## 许可证
+- The tunnel approach exposes no port to the internet;
+- Public IP + UDP mapping means port 9 is open to the world — restrict the source or change the port;
+- The relay does no authentication (UDP has no handshake). **"Who can get into your tunnel" is the security boundary.**
 
-MIT，见 [LICENSE](LICENSE)。
+## License
+
+MIT, see [LICENSE](LICENSE).

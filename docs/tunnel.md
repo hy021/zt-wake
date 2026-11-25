@@ -1,37 +1,37 @@
-# 任意三层隧道
+English | [简体中文](tunnel.zh-CN.md)
 
-## 一句话
+# Any layer-3 tunnel
 
-唤醒包固定 102 字节（6×`FF` + MAC×16，UDP 9），**谁转发都一样**。
-"ZT 唤醒"只是"经一条三层隧道把包送到常在线设备"的一个示例，不绑定 ZeroTier。
+## In one sentence
 
-隧道只影响两件事：
+The wake packet is always 102 bytes (6×`FF` + MAC×16, UDP 9), and **it does not matter who forwards it**. "ZT wake" is just one example of "delivering the packet over a layer-3 tunnel to an always-on device" — it is not tied to ZeroTier.
 
-1. 手机能不能打到中继那台设备；
-2. 那台设备能不能在目标局域网广播出去。
+A tunnel only affects two things:
 
-## 对照表
+1. Whether the phone can reach the relay device at all;
+2. Whether that device can broadcast into the target LAN.
 
-| 隧道 | 中继侧要做的 | App 里填什么 |
+## Comparison
+
+| Tunnel | What the relay side needs | What you enter in the app |
 |---|---|---|
-| ZeroTier | 官方客户端 + `wolrelay`（`ZT_IP=auto` 自动识别 `zt*` 网卡） | 中继的 ZT 地址 |
-| Tailscale | 装 tailscaled，`ZT_IP` 改成 `tailscale0` 的地址 | 中继的 Tailscale 地址 |
-| WireGuard | 配 wg0，`ZT_IP` 改成 wg 内网地址 | 该 wg 地址 |
-| frp / nps | 常在线设备跑客户端，映射 UDP 9 | 映射后的公网地址 |
-| 公网 IP + UDP 映射 | 中继监听 `0.0.0.0`，路由做 UDP 转发 | 公网 IP（注意端口暴露） |
-| IPv6 | 能连上中继即可，广播仍走 IPv4 侧 | 中继的 IPv6 地址 |
+| ZeroTier | Official client + `wolrelay` (`ZT_IP=auto` finds the `zt*` interface) | The relay's ZeroTier address |
+| Tailscale | Install tailscaled, set `ZT_IP` to the `tailscale0` address | The relay's Tailscale address |
+| WireGuard | Configure wg0, set `ZT_IP` to the wg address | That wg address |
+| frp / nps | Run the client on an always-on device, map UDP 9 | The mapped public address |
+| Public IP + UDP mapping | Relay listens on the tunnel IP, router forwards UDP | The public IP (mind the exposure) |
+| IPv6 | Only needs to reach the relay; broadcast still happens on IPv4 | The relay's IPv6 address |
 
-**改动量只有一个变量**：`wolrelay` 顶部的 `ZT_IP`。广播地址计算、procd 守护、断线重启全部复用。
+**Exactly one variable changes**: `ZT_IP` at the top of `wolrelay`. Broadcast computation, procd supervision and restart-on-failure are all reused as-is.
 
-## 为什么不能"广播过去"
+## Why "just broadcast over the tunnel" does not work
 
-唤醒包是二层广播帧（目的 MAC 全 F）。三层隧道只保证"某个 IP 可达"，不转发二层广播。
-必须由局域网侧设备接收单播、再改发广播。
+A magic packet is a layer-2 broadcast frame (destination MAC all `FF`). A layer-3 tunnel only guarantees "some IP is reachable"; it does not carry layer-2 broadcasts. Something on the LAN side must receive the unicast packet and re-broadcast it.
 
-IPv6 **没有广播地址**，所谓"IPv6 唤醒"只能靠网卡定向单播（要求网卡支持）。
+IPv6 has **no broadcast address**, so an "IPv6 wake" can only be a directed unicast to the NIC (and requires NIC support).
 
-## 常见误判
+## Common misconceptions
 
-- 「装了 ZeroTier 就能直接唤醒」→ 不行，还缺中继。隧道只解决"包到中继"。
-- 「路由做个端口映射就够了」→ 映射的是 UDP 到一个端口，中继收到后仍要自己发广播；直接把包转发到 `x.x.x.255` 通常不被允许。
-- 「DDNS + 端口映射更简单」→ 能用，但等于把 UDP 端口暴露到公网，安全性不如隧道。
+- "Install ZeroTier and you can wake directly" → no, you still need a relay. The tunnel only solves "packet reaches the relay".
+- "A port forward on the router is enough" → a forward delivers UDP to a port; the relay must still broadcast itself. Forwarding straight to `x.x.x.255` is usually refused.
+- "DDNS + port forward is simpler" → it works, but it exposes the UDP port to the internet, which is weaker than a tunnel.

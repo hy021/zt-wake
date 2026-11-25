@@ -1,43 +1,45 @@
-# 飞牛 NAS（fnOS）做中继
+English | [简体中文](nas-fnos.zh-CN.md)
 
-飞牛 fnOS 基于 **Debian 12（bookworm）**，本质就是一台常开的 Linux，很适合当 WOL 中继——尤其适合"路由器是原厂固件、没有 shell"的用户：**路由器完全不用动，让 NAS 代发广播**。
+# Feiniu NAS (fnOS) as a relay
 
-前提：NAS 与目标主机在**同一局域网**，且 NAS 不休眠。
+fnOS is built on **Debian 12 (bookworm)** — it is essentially an always-on Linux box, which makes it a great WOL relay. Especially useful when your router is a stock firmware with no shell: **leave the router alone and let the NAS do the broadcasting**.
 
-## 1. 打开 SSH
+Prerequisites: the NAS sits in the **same LAN** as the target host, and the NAS does not sleep.
 
-fnOS 的 SSH 默认关闭，需要手动开：
+## 1. Enable SSH
 
-1. 网页后台 → **系统设置 → SSH**
-2. 打开 **SSH 功能** 开关
-3. 打开 **管理员权限**（否则管理员账号登不上）
-4. 端口默认 `22`（可改）
+SSH is off by default on fnOS and must be enabled manually:
 
-然后在电脑上登录：
+1. Web console → **System settings → SSH**
+2. Turn on the **SSH service** switch
+3. Turn on **Administrator privileges** (otherwise the admin account cannot log in)
+4. Port defaults to `22` (changeable)
+
+Then log in from a computer:
 
 ```sh
-ssh <管理员账号>@<NAS的IP> -p 22
+ssh <admin user>@<NAS IP> -p 22
 ```
 
-## 2. 装 socat
+## 2. Install socat
 
-fnOS 是 Debian，直接用 apt：
+fnOS is Debian, so apt just works:
 
 ```sh
 sudo apt update
 sudo apt install -y socat
-socat -V | head -3        # 确认 WITH_UDP 1
+socat -V | head -3        # confirm WITH_UDP 1
 ```
 
-## 3. 写中继脚本（自动等隧道就绪）
+## 3. Write the relay script (waits for the tunnel automatically)
 
-NAS 重启后隧道（ZeroTier / Tailscale / wg）可能晚于服务起来，所以同样把"等地址"放在进程内部：
+After the NAS reboots, the tunnel (ZeroTier / Tailscale / wg) may come up later than the service, so put the waiting inside the process again:
 
 ```sh
 sudo tee /usr/local/bin/wolrelay.sh >/dev/null <<'EOF'
 #!/bin/sh
-# 自动找隧道网卡，拿到 IPv4 后 exec socat 转发到 LAN 广播
-LAN_IF=${LAN_IF:-enp1s0}          # 改成 NAS 接局域网那块网卡
+# find the tunnel NIC, wait for an IPv4, then exec socat and forward to the LAN broadcast
+LAN_IF=${LAN_IF:-enp1s0}          # change to the NIC connected to the LAN
 LAN_BCAST=$(ip -4 addr show "$LAN_IF" 2>/dev/null | awk '/brd /{for(i=1;i<=NF;i++) if($i=="brd"){print $(i+1); exit}}')
 [ -z "$LAN_BCAST" ] && LAN_BCAST=255.255.255.255
 
@@ -59,9 +61,9 @@ EOF
 sudo chmod +x /usr/local/bin/wolrelay.sh
 ```
 
-网卡名查法：`ip -4 addr show | grep -E 'inet |brd'`，找到带局域网 IP 那块。
+To find the NIC name: `ip -4 addr show | grep -E 'inet |brd'` and pick the one with a LAN address.
 
-## 4. 注册成 systemd 服务
+## 4. Register it as a systemd service
 
 ```sh
 sudo tee /etc/systemd/system/wolrelay.service >/dev/null <<'EOF'
@@ -86,42 +88,42 @@ sudo systemctl enable --now wolrelay
 sudo systemctl status wolrelay --no-pager
 ```
 
-看日志：
+Watch the log:
 
 ```sh
 journalctl -u wolrelay -f
-# 期望：ready: 10.147.20.5:9 (ztab1234cd) -> 192.168.1.255:9
+# expected: ready: 10.147.20.5:9 (ztab1234cd) -> 192.168.1.255:9
 ```
 
-## 5. 验证
+## 5. Verify
 
-1. 确认端口在听：`sudo ss -lnup | grep ':9 '`
-2. 手机（走流量、隧道已连）发一次唤醒包
-3. `journalctl -u wolrelay -n 20` 应出现一次 102 字节的接收记录；主机应被唤醒
+1. Confirm the port is listening: `sudo ss -lnup | grep ':9 '`
+2. Send one wake packet from the phone (mobile data, tunnel connected)
+3. `journalctl -u wolrelay -n 20` should show one 102-byte reception record, and the host should wake
 
-若日志没有记录，说明包没进来：先查隧道是否连通、`bind` 地址是否是隧道网卡的地址。
+If nothing appears in the log, the packet never arrived: check that the tunnel is connected and that `bind` is the tunnel NIC's address.
 
-## 6. 防火墙与端口占用
+## 6. Firewall and port conflicts
 
-- fnOS 若启用了防火墙（后台"安全/防火墙"里有开关），需放行 **UDP 9**；
-- 端口被占：`sudo ss -lnup | grep ':9 '`，有别的进程就 `sudo kill <pid>` 后再 `systemctl restart wolrelay`；
-- **不要**把 `bind` 写成 `0.0.0.0`：会把自己发的广播收回来形成自回环，CPU 打满。
+- If fnOS has its firewall enabled (there is a switch under security/firewall in the console), allow **UDP 9**;
+- Port taken: `sudo ss -lnup | grep ':9 '`, kill the other process with `sudo kill <pid>`, then `systemctl restart wolrelay`;
+- **Do not** set `bind` to `0.0.0.0`: the NAS will receive its own broadcast back in a self-loop and peg the CPU.
 
-## 7. Docker 方式（可选）
+## 7. Docker alternative (optional)
 
-习惯用容器的话，把 socat 跑成 host 网络容器也行：
+If you prefer containers, socat can run as a host-network container:
 
 ```sh
 docker run -d --name wolrelay --restart=always --network host \
   alpine/socat -ly \
-  "UDP4-RECVFROM:9,bind=<隧道IP>,reuseaddr,fork" \
-  "UDP4-DATAGRAM:<局域网广播>:9,broadcast"
+  "UDP4-RECVFROM:9,bind=<tunnel ip>,reuseaddr,fork" \
+  "UDP4-DATAGRAM:<LAN broadcast>:9,broadcast"
 ```
 
-缺点是隧道 IP 变了要重建容器，所以更推荐上面的 systemd + 等待脚本方案。
+The downside is having to recreate the container whenever the tunnel address changes, so the systemd + wait-script approach above is preferable.
 
-## 8. 注意事项
+## 8. Notes
 
-- **NAS 不能休眠**：系统的硬盘休眠不影响网卡，但整机睡眠/关机就会断掉中继；
-- NAS 自身如果也要被唤醒，那是另一件事（需主板/网卡支持 WOL），跟中继无关；
-- 隧道地址变化（重连后重新分配）时，脚本会重新取地址，只要进程重启即可：`sudo systemctl restart wolrelay`。
+- **The NAS must not sleep**: disk spin-down does not affect the NIC, but whole-system sleep or shutdown kills the relay;
+- If the NAS itself also needs to be woken, that is a separate matter (WOL support on motherboard/NIC) and unrelated to the relay;
+- When the tunnel address changes after a reconnect, just restart the process so the script picks up the new address: `sudo systemctl restart wolrelay`.
