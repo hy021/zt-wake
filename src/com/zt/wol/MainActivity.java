@@ -429,7 +429,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    /** "192.168.10.1:9" -> "192.168.10.1" */
+    /** "192.168.1.1:9" -> "192.168.1.1" */
     private String ztGwOf(String zt) {
         if (zt == null) return "";
         String t = zt.trim();
